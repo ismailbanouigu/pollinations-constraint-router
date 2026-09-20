@@ -302,8 +302,14 @@ export function chooseModel(
 
     const score = (model: CatalogModel): number => {
         const status = live.get(model.id);
-        const p95 = finiteNumber(status?.latency_p95_ms, 30_000);
-        const requests = Math.max(1, finiteNumber(status?.total_requests, 0));
+        const observedRequests = finiteNumber(status?.total_requests, 0);
+        // Do not let a tiny sample win the speed route: endpoint-level
+        // incompatibilities often hide behind a handful of fast successes.
+        const p95 =
+            observedRequests >= 100
+                ? finiteNumber(status?.latency_p95_ms, 30_000)
+                : 30_000;
+        const requests = Math.max(1, observedRequests);
         const failureRate = finiteNumber(status?.errors_5xx, 0) / requests;
         const cost = requestCost(model, signals);
         const healthPenalty = failureRate * 100_000;
