@@ -73,6 +73,47 @@ function collectText(value: unknown, parts: string[], depth = 0): void {
     }
 }
 
+function collectMessageText(value: unknown, parts: string[], depth = 0): void {
+    if (depth > 8) return;
+    if (typeof value === "string") {
+        parts.push(value);
+        return;
+    }
+    if (Array.isArray(value)) {
+        for (const item of value) collectMessageText(item, parts, depth + 1);
+        return;
+    }
+    if (!value || typeof value !== "object") return;
+    const item = value as Record<string, unknown>;
+    if (typeof item.text === "string") parts.push(item.text);
+    else if (item.content !== undefined)
+        collectMessageText(item.content, parts, depth + 1);
+}
+
+function textInput(value: unknown): string {
+    const parts: string[] = [];
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            if (!item || typeof item !== "object") {
+                collectText(item, parts);
+                continue;
+            }
+            const message = item as Record<string, unknown>;
+            const contentParts: string[] = [];
+            collectMessageText(message.content, contentParts);
+            if (contentParts.length === 0) continue;
+            const role =
+                typeof message.role === "string" ? `${message.role}: ` : "";
+            parts.push(`${role}${contentParts.join("\n")}`);
+        }
+    } else {
+        collectText(value, parts);
+    }
+
+    return parts.join("\n\n");
+}
+
 function containsImage(value: unknown, depth = 0): boolean {
     if (depth > 8 || !value) return false;
     if (Array.isArray(value)) {
@@ -345,10 +386,19 @@ export default async function agent({
                 typeof value === "string" && value.length > 0,
         )
         .join("\n\n");
+    // Some Responses providers only accept the string form of `input` even
+    // though their catalog entry advertises the endpoint. Flatten text-only
+    // histories while preserving multimodal arrays for vision-capable routes.
+    const input = signals.requiresImage ? body.input : textInput(body.input);
 
     return pollinations("/v1/responses", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...body, model: decision.model, instructions }),
+        body: JSON.stringify({
+            ...body,
+            model: decision.model,
+            input,
+            instructions,
+        }),
     });
 }
